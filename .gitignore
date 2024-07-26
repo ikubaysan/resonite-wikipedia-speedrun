@@ -1,0 +1,11 @@
+config.ini
+config_pdf.ini
+config_image.ini
+*.pyc
+.pytest_cache/
+.idea/
+venv/
+__pycache__/
+*.pdf
+pdf_storage/
+*.crx
