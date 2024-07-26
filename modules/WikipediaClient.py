@@ -10,6 +10,9 @@ logger = logging.getLogger(__name__)
 class WikipediaArticle:
     def __init__(self, title: str, url: str, encoded_url: str, links: List[str], summary: str):
         self.title = title
+        # Everything after "wikipedia.org/wiki/" in the URL
+        self.title_url_safe = url.split("wikipedia.org/wiki/")[1]
+        self.pdf_url = f"https://en.wikipedia.org/api/rest_v1/page/pdf/{self.title_url_safe}"
         self.url = url
         self.encoded_url = encoded_url
         self.links = links
