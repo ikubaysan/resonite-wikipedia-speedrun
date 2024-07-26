@@ -1,17 +1,22 @@
 import requests
 import os
-import base64
+import hashlib
 from typing import List
+import time
+import logging
+
+logger = logging.getLogger(__name__)
 
 class WikipediaArticle:
-    def __init__(self, title: str, url: str, encoded_url: str, links: List[str]):
+    def __init__(self, title: str, url: str, encoded_url: str, links: List[str], summary: str):
         self.title = title
         self.url = url
         self.encoded_url = encoded_url
         self.links = links
+        self.summary = summary
 
     def __repr__(self):
-        return f"WikipediaArticle(title={self.title}, url={self.url}, encoded_url={self.encoded_url}, links={self.links})"
+        return f"WikipediaArticle(title={self.title}, url={self.url}, encoded_url={self.encoded_url}, links={len(self.links)}, summary={self.summary[:100]}...)"
 
 class WikipediaClient:
     BASE_URL = "https://en.wikipedia.org/api/rest_v1/page"
@@ -38,7 +43,7 @@ class WikipediaClient:
 
         with open(file_path, 'wb') as file:
             file.write(response.content)
-        print(f"Article '{article.title}' saved to '{file_path}'")
+        logger.info(f"Article '{article.title}' saved to '{file_path}'")
 
     def get_random_articles(self, count: int = 1) -> List[WikipediaArticle]:
         """
@@ -53,7 +58,11 @@ class WikipediaClient:
             "generator": "random",
             "grnlimit": count,
             "grnnamespace": 0,  # Only get articles in the main namespace
-            "origin": "*"       # Handle CORS issues
+            "origin": "*",      # Handle CORS issues
+            "prop": "extracts|links",
+            "exintro": True,    # Only get the introduction part of the text
+            "explaintext": True, # Get plain text extract
+            "pllimit": "max"    # Get maximum links
         }
         response = requests.get(self.RANDOM_URL, params=params)
         response.raise_for_status()  # Raises an error if the request was unsuccessful
@@ -63,47 +72,62 @@ class WikipediaClient:
         for page in data['query']['pages'].values():
             title = page['title']
             url = f"{self.ARTICLE_URL}{title.replace(' ', '_')}"
-            encoded_url = base64.urlsafe_b64encode(url.encode()).decode()
-            links = self.get_article_links(page['pageid'])
-            articles.append(WikipediaArticle(title=title, url=url, encoded_url=encoded_url, links=links))
+            encoded_url = hashlib.md5(url.encode('utf-8')).hexdigest()
+            links = [f"{self.ARTICLE_URL}{link['title'].replace(' ', '_')}" for link in page.get('links', [])]
+            summary = page.get('extract', '')
+            articles.append(WikipediaArticle(title=title, url=url, encoded_url=encoded_url, links=links, summary=summary))
 
         return articles
 
-    def get_article_links(self, pageid: int) -> List[str]:
+    def get_articles_with_min_links(self, min_articles: int, min_links: int, count_per_call: int) -> List[WikipediaArticle]:
         """
-        Gets the list of Wikipedia article links from a specified article.
+        Gets <min_articles> random Wikipedia articles with at least the specified number of Wikipedia links.
 
-        :param pageid: The page ID of the Wikipedia article.
-        :return: A list of URLs to other Wikipedia articles.
+        :param min_links: The minimum number of links required in each article.
+        :param count_per_call: The number of random articles to fetch per API call.
+        :return: A list of two WikipediaArticle objects with at least the specified number of links.
         """
-        params = {
-            "format": "json",
-            "action": "query",
-            "prop": "links",
-            "pageids": pageid,
-            "plnamespace": 0,  # Only get links to articles in the main namespace
-            "pllimit": "max"
-        }
-        response = requests.get(self.RANDOM_URL, params=params)
-        response.raise_for_status()  # Raises an error if the request was unsuccessful
-        data = response.json()
+        articles_with_min_links = []
+        titles_of_articles_with_min_links = set()
 
-        links = []
-        pages = data['query']['pages']
-        for page in pages.values():
-            if 'links' in page:
-                for link in page['links']:
-                    links.append(f"{self.ARTICLE_URL}{link['title'].replace(' ', '_')}")
-        return links
+        iterations = 0
+        while len(articles_with_min_links) < min_articles:
+            if iterations > 0:
+                logger.info(f"Retrying to find articles with at least {min_links} links...")
+                time.sleep(5)
+
+            articles = self.get_random_articles(count_per_call)
+            for article in articles:
+                if len(article.links) >= min_links:
+
+                    if article.title in titles_of_articles_with_min_links:
+                        continue
+
+                    articles_with_min_links.append(article)
+
+                    titles_of_articles_with_min_links.add(article.title)
+
+                    if len(articles_with_min_links) == min_articles:
+                        break
+            iterations += 1
+
+        logger.info(f"Found {min_articles} articles with at least {min_links} links in {iterations} iterations.")
+        return articles_with_min_links
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
     client = WikipediaClient()
 
     # Example usage
     random_articles = client.get_random_articles(3)
-    print(f"Random articles: {random_articles}")
+    logger.info(f"Random articles: {random_articles}")
 
-    # Download the random articles as PDFs
-    # for article in random_articles:
-    #     output_file_path = os.path.join(os.getcwd(), "downloads", f"{article.title}.pdf")
+    # Get 5 articles with at least 5 links each
+    min_links_articles = client.get_articles_with_min_links(min_articles=5, min_links=5, count_per_call=100)
+    logger.info(f"Articles with at least 5 links: {min_links_articles}")
+
+    # # Download the random articles as PDFs
+    # for article in min_links_articles:
+    #     output_file_path = os.path.join(os.getcwd(), "pdf_storage", f"{article.encoded_url}.pdf")
     #     client.download_article_pdf(article, output_file_path)
