@@ -4,49 +4,79 @@ import hashlib
 from typing import List
 import time
 import logging
+from modules.LinkIdentification.DocumentCollection import DocumentCollection
 
 logger = logging.getLogger(__name__)
 
 class WikipediaArticle:
-    def __init__(self, title: str, url: str, encoded_url: str, links: List[str], summary: str):
+    def __init__(self, title: str, url: str, links: List[str], summary: str):
         self.title = title
         # Everything after "wikipedia.org/wiki/" in the URL
         self.title_url_safe = url.split("wikipedia.org/wiki/")[1]
         self.pdf_url = f"https://en.wikipedia.org/api/rest_v1/page/pdf/{self.title_url_safe}"
         self.url = url
-        self.encoded_url = encoded_url
+        self.hashed_url = hashlib.md5(url.encode()).hexdigest()
         self.links = links
         self.summary = summary
 
+    @staticmethod
+    def get_pdf_url_from_title_url_safe(title_url_safe: str) -> str:
+        return f"https://en.wikipedia.org/api/rest_v1/page/pdf/{title_url_safe}"
+
     def __repr__(self):
-        return f"WikipediaArticle(title={self.title}, url={self.url}, encoded_url={self.encoded_url}, links={len(self.links)}, summary={self.summary[:100]}...)"
+        return f"WikipediaArticle(title={self.title}, url={self.url}, hashed_url={self.hashed_url}, links={len(self.links)}, summary={self.summary[:100]}...)"
 
 class WikipediaClient:
     BASE_URL = "https://en.wikipedia.org/api/rest_v1/page"
     RANDOM_URL = "https://en.wikipedia.org/w/api.php"
     ARTICLE_URL = "https://en.wikipedia.org/wiki/"
 
-    def __init__(self):
+    def __init__(self, pdf_download_dir: str):
+        self.pdf_filename_hash_to_pdf_url = {}
+        self.pdf_download_dir = pdf_download_dir
+        os.makedirs(pdf_download_dir, exist_ok=True)
+        self.document_collection = DocumentCollection()
         pass
 
-    def download_article_pdf(self, article: WikipediaArticle, file_path: str) -> None:
+    def download_article_pdf_by_title_url_safe(self, title_url_safe: str) -> None:
+        """
+        Downloads the specified Wikipedia article as a PDF and saves it to the given file path.
+        Creates the directory if it does not exist.
+
+        :param title_url_safe: The title of the Wikipedia article in URL-safe format.
+        """
+        pdf_url = WikipediaArticle.get_pdf_url_from_title_url_safe(title_url_safe)
+        response = requests.get(pdf_url)
+        response.raise_for_status()
+
+        file_path = os.path.join(self.pdf_download_dir, f"{title_url_safe}.pdf")
+
+        with open(file_path, 'wb') as file:
+            file.write(response.content)
+
+        self.document_collection.add_document(file_path)
+
+        logger.info(f"Article '{title_url_safe}' saved to '{file_path}'")
+
+    def download_article_pdf(self, article: WikipediaArticle) -> None:
         """
         Downloads the specified Wikipedia article as a PDF and saves it to the given file path.
         Creates the directory if it does not exist.
 
         :param article: The WikipediaArticle object containing article details.
-        :param file_path: The file path where the PDF should be saved.
         """
-        url = f"{self.BASE_URL}/pdf/{article.title}"
-        response = requests.get(url)
+        response = requests.get(article.pdf_url)
         response.raise_for_status()  # Raises an error if the request was unsuccessful
 
-        # Ensure the directory exists
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        file_path = os.path.join(self.pdf_download_dir, f"{article.title_url_safe}.pdf")
 
         with open(file_path, 'wb') as file:
             file.write(response.content)
+
+        self.document_collection.add_document(file_path)
+
         logger.info(f"Article '{article.title}' saved to '{file_path}'")
+
 
     def get_random_articles(self, count: int = 1) -> List[WikipediaArticle]:
         """
@@ -75,14 +105,13 @@ class WikipediaClient:
         for page in data['query']['pages'].values():
             title = page['title']
             url = f"{self.ARTICLE_URL}{title.replace(' ', '_')}"
-            encoded_url = hashlib.md5(url.encode('utf-8')).hexdigest()
             links = [f"{self.ARTICLE_URL}{link['title'].replace(' ', '_')}" for link in page.get('links', [])]
             summary = page.get('extract', '')
-            articles.append(WikipediaArticle(title=title, url=url, encoded_url=encoded_url, links=links, summary=summary))
+            articles.append(WikipediaArticle(title=title, url=url, links=links, summary=summary))
 
         return articles
 
-    def get_articles_with_min_links(self, min_articles: int, min_links: int, count_per_call: int) -> List[WikipediaArticle]:
+    def get_articles_with_min_links(self, n_articles: int, min_links: int, count_per_call: int) -> List[WikipediaArticle]:
         """
         Gets <min_articles> random Wikipedia articles with at least the specified number of Wikipedia links.
 
@@ -94,7 +123,7 @@ class WikipediaClient:
         titles_of_articles_with_min_links = set()
 
         iterations = 0
-        while len(articles_with_min_links) < min_articles:
+        while len(articles_with_min_links) < n_articles:
             if iterations > 0:
                 logger.info(f"Retrying to find articles with at least {min_links} links...")
                 time.sleep(5)
@@ -110,27 +139,27 @@ class WikipediaClient:
 
                     titles_of_articles_with_min_links.add(article.title)
 
-                    if len(articles_with_min_links) == min_articles:
+                    if len(articles_with_min_links) == n_articles:
                         break
             iterations += 1
 
-        logger.info(f"Found {min_articles} articles with at least {min_links} links in {iterations} iterations.")
+        logger.info(f"Found {n_articles} articles with at least {min_links} links in {iterations} iterations.")
         return articles_with_min_links
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-    client = WikipediaClient()
+    client = WikipediaClient(pdf_download_dir="pdf_storage")
 
     # Example usage
     random_articles = client.get_random_articles(3)
     logger.info(f"Random articles: {random_articles}")
 
     # Get 5 articles with at least 5 links each
-    min_links_articles = client.get_articles_with_min_links(min_articles=5, min_links=5, count_per_call=100)
+    min_links_articles = client.get_articles_with_min_links(n_articles=5, min_links=5, count_per_call=100)
     logger.info(f"Articles with at least 5 links: {min_links_articles}")
 
-    # # Download the random articles as PDFs
-    # for article in min_links_articles:
-    #     output_file_path = os.path.join(os.getcwd(), "pdf_storage", f"{article.encoded_url}.pdf")
-    #     client.download_article_pdf(article, output_file_path)
+    # Download the random articles as PDFs
+    for article in min_links_articles:
+        output_file_dir = os.path.join(os.getcwd(), "pdf_storage")
+        client.download_article_pdf(article)
