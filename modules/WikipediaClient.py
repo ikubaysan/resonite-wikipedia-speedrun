@@ -1,7 +1,7 @@
 import requests
 import os
 import hashlib
-from typing import List
+from typing import List, Optional
 import time
 import logging
 from modules.LinkIdentification.DocumentCollection import DocumentCollection
@@ -23,8 +23,40 @@ class WikipediaArticle:
     def get_pdf_url_from_title_url_safe(title_url_safe: str) -> str:
         return f"https://en.wikipedia.org/api/rest_v1/page/pdf/{title_url_safe}"
 
+    def as_resonite_string(self) -> str:
+        full_str = ""
+
+        # Process title
+        # Truncate title to 100 characters if it's longer, otherwise pad with spaces to 100 characters
+        title_str = self.title[:100].ljust(100)
+        full_str += title_str
+
+        # Process title_url_safe
+        # Truncate title_url_safe to 100 characters if it's longer, otherwise pad with spaces to 100 characters
+        title_url_safe_str = self.title_url_safe[:100].ljust(100)
+        full_str += title_url_safe_str
+
+        # Process pdf_url
+        # Truncate pdf_url to 100 characters if it's longer, otherwise pad with spaces to 100 characters
+        pdf_url_str = self.pdf_url[:100].ljust(100)
+        full_str += pdf_url_str
+
+        # Process summary
+        # Truncate summary to 100 characters if it's longer, otherwise pad with spaces to 100 characters
+        summary_str = (self.summary[:97] + "...").ljust(100)
+        full_str += summary_str
+
+        return full_str
+
     def __repr__(self):
-        return f"WikipediaArticle(title={self.title}, url={self.url}, hashed_url={self.hashed_url}, links={len(self.links)}, summary={self.summary[:100]}...)"
+        return (f"WikipediaArticle("
+                f"title={self.title}, "
+                f"title_url_safe={self.title_url_safe}, "
+                f"url={self.url}, "
+                f"pdf_url={self.pdf_url}, "
+                f"hashed_url={self.hashed_url}, "
+                f"links={self.links}, "
+                f"summary={self.summary})")
 
 class WikipediaClient:
     BASE_URL = "https://en.wikipedia.org/api/rest_v1/page"
@@ -125,7 +157,8 @@ class WikipediaClient:
         iterations = 0
         while len(articles_with_min_links) < n_articles:
             if iterations > 0:
-                logger.info(f"Retrying to find articles with at least {min_links} links...")
+                logger.info(f"Retrying to find articles with at least {min_links} links. "
+                            f"Found so far: {len(articles_with_min_links)}/{n_articles}")
                 time.sleep(5)
 
             articles = self.get_random_articles(count_per_call)
@@ -146,20 +179,72 @@ class WikipediaClient:
         logger.info(f"Found {n_articles} articles with at least {min_links} links in {iterations} iterations.")
         return articles_with_min_links
 
+
+
+
+    def get_article_by_title(self, title: str) -> Optional[WikipediaArticle]:
+        params = {
+            "format": "json",
+            "action": "query",
+            "titles": title,
+            "prop": "extracts|links",
+            "exintro": True,
+            "explaintext": True,
+            "pllimit": "max"
+        }
+        response = requests.get(self.RANDOM_URL, params=params)
+        response.raise_for_status()
+        data = response.json()
+
+        pages = data['query']['pages']
+        if "-1" in pages:
+            # No article found with matching title
+            return None
+
+        # Get the first matching article
+        for page in pages.values():
+            title = page['title']
+            url = f"{self.ARTICLE_URL}{title.replace(' ', '_')}"
+            links = [f"{self.ARTICLE_URL}{link['title'].replace(' ', '_')}" for link in page.get('links', [])]
+            summary = page.get('extract', '')
+            return WikipediaArticle(title=title, url=url, links=links, summary=summary)
+
+        return None
+
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger(__name__)
 
     client = WikipediaClient(pdf_download_dir="pdf_storage")
 
-    # Example usage
-    random_articles = client.get_random_articles(3)
-    logger.info(f"Random articles: {random_articles}")
+    # # Example usage
+    # random_articles = client.get_random_articles(3)
+    # logger.info(f"Random articles: {random_articles}")
+    #
+    # # Get 5 articles with at least 5 links each
+    # min_links_articles = client.get_articles_with_min_links(n_articles=5, min_links=5, count_per_call=100)
+    # logger.info(f"Articles with at least 5 links: {min_links_articles}")
+    #
+    # # Download the random articles as PDFs
+    # for article in min_links_articles:
+    #     output_file_dir = os.path.join(os.getcwd(), "pdf_storage")
+    #     client.download_article_pdf(article)
 
-    # Get 5 articles with at least 5 links each
-    min_links_articles = client.get_articles_with_min_links(n_articles=5, min_links=5, count_per_call=100)
-    logger.info(f"Articles with at least 5 links: {min_links_articles}")
 
-    # Download the random articles as PDFs
-    for article in min_links_articles:
-        output_file_dir = os.path.join(os.getcwd(), "pdf_storage")
-        client.download_article_pdf(article)
+
+
+    # Get article by title
+    article_title = "Puppy"
+    article = client.get_article_by_title(article_title)
+    if article:
+        #logger.info(f"Article found: {article}")
+        pass
+    else:
+        logger.info(f"No article found for title '{article_title}'")
+
+
+    logger.info(f"Resonite string: {article.as_resonite_string()}")
+
+    pass
