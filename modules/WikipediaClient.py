@@ -43,7 +43,8 @@ class WikipediaArticle:
 
         # Process summary
         # Truncate summary to 100 characters if it's longer, otherwise pad with spaces to 100 characters
-        summary_str = (self.summary[:97] + "...").ljust(100)
+        summary_length = 300
+        summary_str = (self.summary[:summary_length - 3] + "...").ljust(summary_length)
         full_str += summary_str
 
         return full_str
@@ -211,6 +212,25 @@ class WikipediaClient:
 
         return None
 
+    def get_article_by_url(self, url: str) -> Optional[WikipediaArticle]:
+        """
+        Extracts the title from the URL and fetches the article details from the Wikipedia API.
+        Returns a WikipediaArticle object if successful, otherwise returns None.
+        """
+        if not url.startswith(self.ARTICLE_URL):
+            logger.info(f"URL does not start with the expected Wikipedia URL prefix: {self.ARTICLE_URL}")
+            return None
+
+        try:
+            # Extract the title from the URL
+            title_url_safe = url.split(self.ARTICLE_URL)[1]
+            title = title_url_safe.replace('_', ' ')
+
+            # Fetch the article by title
+            return self.get_article_by_title(title)
+        except Exception as e:
+            logger.error(f"Error extracting article from URL: {url} - {e}")
+            return None
 
 
 if __name__ == "__main__":

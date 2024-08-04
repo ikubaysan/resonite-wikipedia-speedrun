@@ -19,8 +19,8 @@ class FlaskAPIServer:
             article_pairs_str = self.construct_article_pairs_string(articles)
             return article_pairs_str
 
-        @self.app.route('/url_at_position', methods=['GET'])
-        def get_url_at_position():
+        @self.app.route('/article_at_position', methods=['GET'])
+        def get_article_on_pdf_click():
             title_url_safe = request.args.get('title_url_safe')
             x = float(request.args.get('normalized_click_point_x', request.args.get('x')))
             y = float(request.args.get('normalized_click_point_y', request.args.get('y')))
@@ -35,17 +35,21 @@ class FlaskAPIServer:
 
             url = document.get_url_at_position(x, y, normalized_coordinates=True, page_index=page_index)
             if url:
-                return WikipediaArticle.get_pdf_url_from_title_url_safe(title_url_safe)
+                article = self.client.get_article_by_url(title_url_safe)
+                if article:
+                    return article.as_resonite_string()
+                else:
+                    return ""
             else:
                 return ""
 
-        @self.app.route('/article_from_input_title', methods=['GET'])
-        def get_article_from_input():
+        @self.app.route('/article_by_input_title', methods=['GET'])
+        def get_article_by_input():
             input_title = request.args.get('input_title')
 
             article = self.client.get_article_by_title(title=input_title)
             if not article:
-                return "no_article_found"
+                return ""
 
             resonite_string = article.as_resonite_string()
             return resonite_string
